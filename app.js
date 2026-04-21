@@ -4,7 +4,9 @@ const NOTIFY_CHAR_UUID = '00002aac-0000-1000-8000-00805f9b34fb';
 const WRITE_CHAR_UUID = '00002aad-0000-1000-8000-00805f9b34fb';
 const BATTERY_SERVICE_UUID = '0000180f-0000-1000-8000-00805f9b34fb';
 const BATTERY_CHAR_UUID = '00002a19-0000-1000-8000-00805f9b34fb';
-// 激活命令 (DF 00 06 EF 02 04 02 00 01 01)
+const CCCD_UUID = '00002902-0000-1000-8000-00805f9b34fb';
+
+// 激活命令（与Python一致）
 const ACTIVATION_CMD = new Uint8Array([0xDF, 0x00, 0x06, 0xEF, 0x02, 0x04, 0x02, 0x00, 0x01, 0x01]);
 
 // ==================== 全局变量 ====================
@@ -28,18 +30,13 @@ function buf2hex(buffer) {
 function updateUI(steps, distance, calorie) {
     document.getElementById('steps').innerText = steps;
     document.getElementById('distance').innerText = distance;
-    // 假设卡路里原始值是 kcal 的 100 倍（例如 7230 -> 72.30）
     document.getElementById('calories').innerText = (calorie / 100).toFixed(2);
 }
 
 function setStatus(message, isError = false) {
     const statusDiv = document.getElementById('statusArea');
     statusDiv.innerHTML = message;
-    if (isError) {
-        statusDiv.style.color = '#ff3b30';
-    } else {
-        statusDiv.style.color = '#666';
-    }
+    statusDiv.style.color = isError ? '#ff3b30' : '#666';
 }
 
 function showError(message) {
@@ -55,43 +52,27 @@ function clearError() {
 function openDB() {
     return new Promise((resolve, reject) => {
         const request = indexedDB.open(DB_NAME, DB_VERSION);
-        request.onerror = (event) => {
-            console.error('IndexedDB error:', event.target.error);
-            reject(event.target.error);
-        };
+        request.onerror = (event) => reject(event.target.error);
         request.onsuccess = (event) => {
             db = event.target.result;
-            console.log('IndexedDB opened successfully');
+            console.log('IndexedDB opened');
             resolve(db);
         };
         request.onupgradeneeded = (event) => {
             const db = event.target.result;
             if (!db.objectStoreNames.contains(STORE_NAME)) {
-                const objectStore = db.createObjectStore(STORE_NAME, { keyPath: 'date' });
-                objectStore.createIndex('steps', 'steps', { unique: false });
-                objectStore.createIndex('calories', 'calories', { unique: false });
-                console.log('Object store created');
+                db.createObjectStore(STORE_NAME, { keyPath: 'date' });
             }
         };
     });
 }
 
 function saveDataToDB(steps, distance, calories) {
-    if (!db) {
-        console.warn('Database not ready, data not saved');
-        return;
-    }
+    if (!db) return;
     const today = new Date().toISOString().slice(0, 10);
     const transaction = db.transaction([STORE_NAME], 'readwrite');
     const store = transaction.objectStore(STORE_NAME);
-    const data = { date: today, steps, distance, calories };
-    const request = store.put(data);
-    request.onerror = (event) => {
-        console.error('Error saving data to DB', event.target.error);
-    };
-    request.onsuccess = () => {
-        console.log('Data saved to DB', data);
-    };
+    store.put({ date: today, steps, distance, calories });
 }
 
 function loadTodayData() {
@@ -100,39 +81,28 @@ function loadTodayData() {
     const transaction = db.transaction([STORE_NAME], 'readonly');
     const store = transaction.objectStore(STORE_NAME);
     const request = store.get(today);
-    request.onsuccess = (event) => {
+    request.onsuccess = () => {
         if (request.result) {
             const { steps, distance, calories } = request.result;
             updateUI(steps, distance, calories);
-            console.log('Loaded today\'s data from DB');
         }
-    };
-    request.onerror = (event) => {
-        console.error('Error loading today\'s data', event.target.error);
     };
 }
 
 // ==================== 保活机制 ====================
 async function keepAlive() {
-    if (!gattServer || !gattServer.connected) {
-        console.log('Keep-alive: not connected');
-        return;
-    }
+    if (!gattServer?.connected) return;
     try {
         const service = await gattServer.getPrimaryService(BATTERY_SERVICE_UUID);
         const char = await service.getCharacteristic(BATTERY_CHAR_UUID);
         const value = await char.readValue();
         const batteryLevel = value.getUint8(0);
-        console.log(`保活 - 电池电量: ${batteryLevel}%`);
+        console.log(`保活 - 电量: ${batteryLevel}%`);
         setStatus(`连接正常，电量 ${batteryLevel}%`);
     } catch (e) {
-        console.warn('Keep-alive read failed, connection may be lost', e);
-        // 如果读取失败，可能连接已断开，清除定时器
-        if (keepAliveInterval) {
-            clearInterval(keepAliveInterval);
-            keepAliveInterval = null;
-        }
-        setStatus('连接已断开，请重新连接', true);
+        console.warn('保活失败，可能已断开', e);
+        stopKeepAlive();
+        setStatus('连接已断开', true);
         document.getElementById('connectBtn').disabled = false;
         document.getElementById('dataArea').style.display = 'none';
     }
@@ -140,7 +110,7 @@ async function keepAlive() {
 
 function startKeepAlive() {
     if (keepAliveInterval) clearInterval(keepAliveInterval);
-    keepAliveInterval = setInterval(keepAlive, 30000); // 每30秒保活一次
+    keepAliveInterval = setInterval(keepAlive, 30000);
 }
 
 function stopKeepAlive() {
@@ -150,161 +120,120 @@ function stopKeepAlive() {
     }
 }
 
-// ==================== 通知数据处理 ====================
-// function handleNotifications(event) {
-//     const data = new Uint8Array(event.target.value);
-//     console.log(`收到数据 (长度 ${data.length}): ${buf2hex(data)}`);
-
-//     if (data.length === 20 && data[0] === 0xDF) {
-//         // 第一条数据包，暂存
-//         firstPacket = data;
-//     } else if (data.length === 1 && firstPacket !== null) {
-//         // 第二条数据包，开始解析
-//         const steps = (firstPacket[9] << 24) | (firstPacket[10] << 16) | (firstPacket[11] << 8) | firstPacket[12];
-//         const distance = (firstPacket[13] << 24) | (firstPacket[14] << 16) | (firstPacket[15] << 8) | firstPacket[16];
-//         // 卡路里：第一条包索引17-19（3字节） + 第二条包（1字节）
-//         const calorieBytes = new Uint8Array([firstPacket[17], firstPacket[18], firstPacket[19], data[0]]);
-//         const calorie = (calorieBytes[0] << 24) | (calorieBytes[1] << 16) | (calorieBytes[2] << 8) | calorieBytes[3];
-        
-//         console.log(`解析结果: 步数=${steps}, 距离=${distance}, 卡路里=${calorie}`);
-//         updateUI(steps, distance, calorie);
-//         saveDataToDB(steps, distance, calorie);
-        
-//         firstPacket = null; // 重置状态
-//     } else {
-//         // 意外的数据包，重置状态
-//         firstPacket = null;
-//     }
-// }
+// ==================== 通知处理 ====================
 function handleNotifications(event) {
     const data = new Uint8Array(event.target.value);
-    console.log("收到原始数据:", buf2hex(data), "长度:", data.length);
+    console.log(`收到通知 长度${data.length}: ${buf2hex(data)}`);
 
     if (data.length === 20 && data[0] === 0xDF) {
-        // 第一条包，暂存
         firstPacket = data;
-        console.log("暂存第一条包");
+        console.log('暂存第一条包');
     } else if (data.length === 1 && firstPacket !== null) {
-        console.log("收到第二条包，开始解析");
+        // 解析步数 (大端序 4字节)
         const steps = (firstPacket[9] << 24) | (firstPacket[10] << 16) | (firstPacket[11] << 8) | firstPacket[12];
-        const distance = (firstPacket[13] << 24) | (firstPacket[16] << 16) | (firstPacket[15] << 8) | firstPacket[16];
-        // 注意：上面的距离解析可能有误，应该是连续四个字节：firstPacket[13], firstPacket[14], firstPacket[15], firstPacket[16]
-        // 修正：
-        const distanceCorrect = (firstPacket[13] << 24) | (firstPacket[14] << 16) | (firstPacket[15] << 8) | firstPacket[16];
-        const calorieBytes = new Uint8Array([firstPacket[17], firstPacket[18], firstPacket[19], data[0]]);
-        const calorie = (calorieBytes[0] << 24) | (calorieBytes[1] << 16) | (calorieBytes[2] << 8) | calorieBytes[3];
+        // 解析距离 (大端序 4字节)
+        const distance = (firstPacket[13] << 24) | (firstPacket[14] << 16) | (firstPacket[15] << 8) | firstPacket[16];
+        // 解析卡路里: 第一条包索引17-19 (3字节) + 第二条包 (1字节)
+        const calorie = (firstPacket[17] << 24) | (firstPacket[18] << 16) | (firstPacket[19] << 8) | data[0];
         
-        console.log(`解析结果: 步数=${steps}, 距离=${distanceCorrect}, 卡路里=${calorie}`);
-        updateUI(steps, distanceCorrect, calorie);
-        saveDataToDB(steps, distanceCorrect, calorie);
-        
+        console.log(`步数=${steps}, 距离=${distance}, 卡路里=${calorie}`);
+        updateUI(steps, distance, calorie);
+        saveDataToDB(steps, distance, calorie);
         firstPacket = null;
     } else {
-        // 意外包，重置
         firstPacket = null;
-        console.log("意外数据包，状态重置");
+        console.log('意外数据包，状态重置');
     }
 }
 
-// ==================== 蓝牙连接与激活 ====================
+// ==================== 手动写入 CCCD（可选，增强兼容性） ====================
+async function enableNotificationsManually(characteristic) {
+    try {
+        const descriptor = await characteristic.getDescriptor(CCCD_UUID);
+        await descriptor.writeValue(new Uint8Array([0x01, 0x00]));
+        console.log('手动写入CCCD启用通知');
+    } catch (err) {
+        console.warn('手动写入CCCD失败，可能已自动启用', err);
+    }
+}
+
+// ==================== 蓝牙连接 ====================
 async function connectToDevice() {
-    // 清理之前的连接
-    if (gattServer && gattServer.connected) {
-        try {
-            await gattServer.disconnect();
-        } catch (e) {
-            console.warn('Disconnect error', e);
-        }
+    if (!navigator.bluetooth) {
+        showError('当前浏览器不支持 Web Bluetooth API。请使用 Android Chrome 并确保 HTTPS 访问。');
+        return;
+    }
+
+    if (gattServer?.connected) {
+        try { await gattServer.disconnect(); } catch(e) {}
     }
     stopKeepAlive();
     firstPacket = null;
-    
+
     try {
         setStatus('正在请求设备...');
         const device = await navigator.bluetooth.requestDevice({
-            filters: [{ name: 'S10Pro' }],
-            // acceptAllDevices: true,
+            filters: [{ name: 'S10Pro' }],  // 请根据你的手表实际名称修改
             optionalServices: [SERVICE_UUID, BATTERY_SERVICE_UUID]
         });
-        
-        if (!device.gatt) {
-            throw new Error('所选设备不支持 GATT 服务。');
-        }
-        
-        setStatus('正在连接 GATT 服务器...');
+
+        setStatus('正在连接...');
         gattServer = await device.gatt.connect();
-        console.log('GATT 服务器已连接', gattServer);
-        
+        console.log('GATT连接成功');
+
         setStatus('正在获取服务...');
         const service = await gattServer.getPrimaryService(SERVICE_UUID);
-        console.log('已获取服务', service);
-        
-        setStatus('正在获取特征...');
+        console.log('服务获取成功');
+
         notifyCharacteristic = await service.getCharacteristic(NOTIFY_CHAR_UUID);
         writeCharacteristic = await service.getCharacteristic(WRITE_CHAR_UUID);
-        console.log('已获取特征');
-        
-        // 启用通知
-        setStatus('正在启用通知...');
+        console.log('特征获取成功');
+
+        // 1. 手动写入CCCD（确保通知启用）
+        await enableNotificationsManually(notifyCharacteristic);
+        // 2. 调用 startNotifications（Web Bluetooth API 标准方法）
         await notifyCharacteristic.startNotifications();
         notifyCharacteristic.addEventListener('characteristicvaluechanged', handleNotifications);
-        
-        // 发送激活命令
-        setStatus('正在发送激活命令...');
-        await writeCharacteristic.writeValue(ACTIVATION_CMD);
+        console.log('通知订阅成功');
+
+        // 3. 发送激活命令（使用无响应写入，与Python的response=False一致）
+        await writeCharacteristic.writeValueWithoutResponse(ACTIVATION_CMD);
         console.log('激活命令已发送');
-        
-        // 启动保活
+
         startKeepAlive();
-        
-        // 更新 UI
+
         document.getElementById('connectBtn').disabled = true;
         document.getElementById('dataArea').style.display = 'block';
         clearError();
         setStatus('已连接，等待数据...');
-        
-        // 加载今日已有数据
+
         loadTodayData();
-        
     } catch (error) {
         console.error('连接错误:', error);
         showError(error.message);
         document.getElementById('connectBtn').disabled = false;
         document.getElementById('dataArea').style.display = 'none';
-        if (gattServer && gattServer.connected) {
-            try {
-                await gattServer.disconnect();
-            } catch (e) {}
-        }
+        if (gattServer?.connected) await gattServer.disconnect();
         stopKeepAlive();
     }
 }
 
-// ==================== 页面卸载时清理 ====================
+// ==================== 页面卸载清理 ====================
 window.addEventListener('beforeunload', () => {
-    if (keepAliveInterval) {
-        clearInterval(keepAliveInterval);
-    }
-    if (gattServer && gattServer.connected) {
-        gattServer.disconnect();
-    }
+    stopKeepAlive();
+    if (gattServer?.connected) gattServer.disconnect();
 });
 
 // ==================== Service Worker 注册 ====================
 if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/sw.js')
-            .then(reg => console.log('Service Worker registered', reg))
-            .catch(err => console.log('Service Worker registration failed', err));
+        navigator.serviceWorker.register('/sw.js').catch(err => console.log('SW注册失败', err));
     });
 }
 
-// ==================== 初始化 IndexedDB 和事件绑定 ====================
+// ==================== 初始化 ====================
 (async () => {
     await openDB();
-    // 页面加载时尝试加载今日数据（可能无连接时显示上次记录）
     loadTodayData();
-    
-    const connectBtn = document.getElementById('connectBtn');
-    connectBtn.addEventListener('click', connectToDevice);
+    document.getElementById('connectBtn').addEventListener('click', connectToDevice);
 })();
