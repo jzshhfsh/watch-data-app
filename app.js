@@ -151,29 +151,58 @@ function stopKeepAlive() {
 }
 
 // ==================== 通知数据处理 ====================
+// function handleNotifications(event) {
+//     const data = new Uint8Array(event.target.value);
+//     console.log(`收到数据 (长度 ${data.length}): ${buf2hex(data)}`);
+
+//     if (data.length === 20 && data[0] === 0xDF) {
+//         // 第一条数据包，暂存
+//         firstPacket = data;
+//     } else if (data.length === 1 && firstPacket !== null) {
+//         // 第二条数据包，开始解析
+//         const steps = (firstPacket[9] << 24) | (firstPacket[10] << 16) | (firstPacket[11] << 8) | firstPacket[12];
+//         const distance = (firstPacket[13] << 24) | (firstPacket[14] << 16) | (firstPacket[15] << 8) | firstPacket[16];
+//         // 卡路里：第一条包索引17-19（3字节） + 第二条包（1字节）
+//         const calorieBytes = new Uint8Array([firstPacket[17], firstPacket[18], firstPacket[19], data[0]]);
+//         const calorie = (calorieBytes[0] << 24) | (calorieBytes[1] << 16) | (calorieBytes[2] << 8) | calorieBytes[3];
+        
+//         console.log(`解析结果: 步数=${steps}, 距离=${distance}, 卡路里=${calorie}`);
+//         updateUI(steps, distance, calorie);
+//         saveDataToDB(steps, distance, calorie);
+        
+//         firstPacket = null; // 重置状态
+//     } else {
+//         // 意外的数据包，重置状态
+//         firstPacket = null;
+//     }
+// }
 function handleNotifications(event) {
     const data = new Uint8Array(event.target.value);
-    console.log(`收到数据 (长度 ${data.length}): ${buf2hex(data)}`);
+    console.log("收到原始数据:", buf2hex(data), "长度:", data.length);
 
     if (data.length === 20 && data[0] === 0xDF) {
-        // 第一条数据包，暂存
+        // 第一条包，暂存
         firstPacket = data;
+        console.log("暂存第一条包");
     } else if (data.length === 1 && firstPacket !== null) {
-        // 第二条数据包，开始解析
+        console.log("收到第二条包，开始解析");
         const steps = (firstPacket[9] << 24) | (firstPacket[10] << 16) | (firstPacket[11] << 8) | firstPacket[12];
-        const distance = (firstPacket[13] << 24) | (firstPacket[14] << 16) | (firstPacket[15] << 8) | firstPacket[16];
-        // 卡路里：第一条包索引17-19（3字节） + 第二条包（1字节）
+        const distance = (firstPacket[13] << 24) | (firstPacket[16] << 16) | (firstPacket[15] << 8) | firstPacket[16];
+        // 注意：上面的距离解析可能有误，应该是连续四个字节：firstPacket[13], firstPacket[14], firstPacket[15], firstPacket[16]
+        // 修正：
+        const distanceCorrect = (firstPacket[13] << 24) | (firstPacket[14] << 16) | (firstPacket[15] << 8) | firstPacket[16];
         const calorieBytes = new Uint8Array([firstPacket[17], firstPacket[18], firstPacket[19], data[0]]);
         const calorie = (calorieBytes[0] << 24) | (calorieBytes[1] << 16) | (calorieBytes[2] << 8) | calorieBytes[3];
         
-        console.log(`解析结果: 步数=${steps}, 距离=${distance}, 卡路里=${calorie}`);
-        updateUI(steps, distance, calorie);
-        saveDataToDB(steps, distance, calorie);
+        console.log(`解析结果: 步数=${steps}, 距离=${distanceCorrect}, 卡路里=${calorie}`);
+        updateUI(steps, distanceCorrect, calorie);
+        saveDataToDB(steps, distanceCorrect, calorie);
         
-        firstPacket = null; // 重置状态
-    } else {
-        // 意外的数据包，重置状态
         firstPacket = null;
+    } else {
+        // 意外包，重置
+        firstPacket = null;
+        console.log("意外数据包，状态重置");
     }
 }
 
@@ -193,8 +222,8 @@ async function connectToDevice() {
     try {
         setStatus('正在请求设备...');
         const device = await navigator.bluetooth.requestDevice({
-            // filters: [{ name: 'S10Pro' }],
-            acceptAllDevices: true,
+            filters: [{ name: 'S10Pro' }],
+            // acceptAllDevices: true,
             optionalServices: [SERVICE_UUID, BATTERY_SERVICE_UUID]
         });
         
