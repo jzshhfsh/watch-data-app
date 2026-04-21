@@ -1,0 +1,16 @@
+{
+  "name": "手表运动数据助手",
+  "short_name": "运动助手",
+  "description": "连接手表，同步运动数据",
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#007aff",
+  "background_color": "#ffffff",
+  "icons": [
+    {
+      "src": "icon.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

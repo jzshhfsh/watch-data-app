@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>手表运动数据助手</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#007aff">
+</head>
+<body>
+    <div class="container">
+        <h1>⌚️ 运动数据助手</h1>
+        <button id="connectBtn">🔌 连接手表</button>
+        <div id="dataArea" class="data-card" style="display: none;">
+            <div>🚶 步数: <span id="steps">0</span></div>
+            <div>📏 距离: <span id="distance">0</span> 米</div>
+            <div>🔥 卡路里: <span id="calories">0</span> kcal</div>
+        </div>
+        <div id="errorArea"></div>
+        <div id="statusArea" style="margin-top: 20px; font-size: 14px; color: #666;"></div>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>
