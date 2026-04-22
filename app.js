@@ -136,16 +136,16 @@ function processData(data) {
     }
 }
 
+// 简化版 handleNotifications，只打印 event.target.value 的原始内容
 function handleNotifications(event) {
-    const characteristic = event.target;
-    let data = new Uint8Array(characteristic.value);
-    if (data.length === 0) {
-        // 备用方案：主动读取
-        characteristic.readValue()
-            .then(value => processData(new Uint8Array(value)))
-            .catch(err => console.warn('主动读取失败', err));
-    } else {
+    const value = event.target.value;
+    if (value && value.byteLength > 0) {
+        const data = new Uint8Array(value);
+        console.log('通知数据:', buf2hex(data));
         processData(data);
+    } else {
+        console.warn('收到空通知，value:', value);
+        // 不主动读取，避免冲突
     }
 }
 
