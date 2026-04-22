@@ -4,10 +4,12 @@ const NOTIFY_CHAR_UUID = '00002aac-0000-1000-8000-00805f9b34fb';
 const WRITE_CHAR_UUID = '00002aad-0000-1000-8000-00805f9b34fb';
 const BATTERY_SERVICE_UUID = '0000180f-0000-1000-8000-00805f9b34fb';
 const BATTERY_CHAR_UUID = '00002a19-0000-1000-8000-00805f9b34fb';
-const CCCD_UUID = '00002902-0000-1000-8000-00805f9b34fb';
 
-// 激活命令（与Python一致）
-const ACTIVATION_CMD = new Uint8Array([0xDF, 0x00, 0x06, 0xEF, 0x02, 0x04, 0x02, 0x00, 0x01, 0x01]);
+// 尝试不同的命令（根据你的抓包选择）
+// 命令1: 步数同步（推测）
+const ACTIVATION_CMD = new Uint8Array([0xDF, 0x00, 0x05, 0x15, 0x27, 0x04, 0x06, 0x00, 0x00]);
+// 命令2: 原始心率激活（可能也有效）
+// const ACTIVATION_CMD = new Uint8Array([0xDF, 0x00, 0x06, 0xEF, 0x02, 0x04, 0x02, 0x00, 0x01, 0x01]);
 
 // ==================== 全局变量 ====================
 let gattServer = null;
@@ -129,31 +131,18 @@ function handleNotifications(event) {
         firstPacket = data;
         console.log('暂存第一条包');
     } else if (data.length === 1 && firstPacket !== null) {
-        // 解析步数 (大端序 4字节)
         const steps = (firstPacket[9] << 24) | (firstPacket[10] << 16) | (firstPacket[11] << 8) | firstPacket[12];
-        // 解析距离 (大端序 4字节)
         const distance = (firstPacket[13] << 24) | (firstPacket[14] << 16) | (firstPacket[15] << 8) | firstPacket[16];
-        // 解析卡路里: 第一条包索引17-19 (3字节) + 第二条包 (1字节)
         const calorie = (firstPacket[17] << 24) | (firstPacket[18] << 16) | (firstPacket[19] << 8) | data[0];
-        
         console.log(`步数=${steps}, 距离=${distance}, 卡路里=${calorie}`);
         updateUI(steps, distance, calorie);
         saveDataToDB(steps, distance, calorie);
         firstPacket = null;
     } else {
-        firstPacket = null;
-        console.log('意外数据包，状态重置');
-    }
-}
-
-// ==================== 手动写入 CCCD（可选，增强兼容性） ====================
-async function enableNotificationsManually(characteristic) {
-    try {
-        const descriptor = await characteristic.getDescriptor(CCCD_UUID);
-        await descriptor.writeValue(new Uint8Array([0x01, 0x00]));
-        console.log('手动写入CCCD启用通知');
-    } catch (err) {
-        console.warn('手动写入CCCD失败，可能已自动启用', err);
+        if (firstPacket !== null) {
+            console.warn('收到意外包，重置状态');
+            firstPacket = null;
+        }
     }
 }
 
@@ -189,14 +178,12 @@ async function connectToDevice() {
         writeCharacteristic = await service.getCharacteristic(WRITE_CHAR_UUID);
         console.log('特征获取成功');
 
-        // 1. 手动写入CCCD（确保通知启用）
-        await enableNotificationsManually(notifyCharacteristic);
-        // 2. 调用 startNotifications（Web Bluetooth API 标准方法）
+        // 订阅通知
         await notifyCharacteristic.startNotifications();
         notifyCharacteristic.addEventListener('characteristicvaluechanged', handleNotifications);
         console.log('通知订阅成功');
 
-        // 3. 发送激活命令（使用无响应写入，与Python的response=False一致）
+        // 发送激活命令（使用无响应写入）
         await writeCharacteristic.writeValueWithoutResponse(ACTIVATION_CMD);
         console.log('激活命令已发送');
 
@@ -224,7 +211,7 @@ window.addEventListener('beforeunload', () => {
     if (gattServer?.connected) gattServer.disconnect();
 });
 
-// ==================== Service Worker 注册 ====================
+// ==================== Service Worker 注册（可选）====================
 if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
         navigator.serviceWorker.register('/sw.js').catch(err => console.log('SW注册失败', err));
