@@ -138,7 +138,7 @@ function processData(data) {
 
 // 简化版 handleNotifications，只打印 event.target.value 的原始内容
 function handleNotifications(event) {
-    const value = event.target.value;
+    const value = event.target.value.buffer;
     if (value && value.byteLength > 0) {
         const data = new Uint8Array(value);
         console.log('通知数据:', buf2hex(data));
