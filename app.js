@@ -191,12 +191,12 @@ async function connectToDevice() {
         writeCharacteristic = await service.getCharacteristic(WRITE_CHAR_UUID);
         console.log('特征获取成功');
 
+        await writeCharacteristic.writeValueWithoutResponse(ACTIVATION_CMD);
+        console.log('激活命令已发送');
+
         await notifyCharacteristic.startNotifications();
         notifyCharacteristic.addEventListener('characteristicvaluechanged', handleNotifications);
         console.log('通知订阅成功');
-
-        await writeCharacteristic.writeValueWithoutResponse(ACTIVATION_CMD);
-        console.log('激活命令已发送');
 
         startKeepAlive();
 
