@@ -15,6 +15,8 @@ let writeCharacteristic = null;
 let firstPacket = null;
 let keepAliveInterval = null;
 let db = null;
+// 在全局变量区域添加图表实例
+let statsChart = null;
 
 const DB_NAME = 'SportsDataDB';
 const DB_VERSION = 1;
@@ -71,6 +73,14 @@ function saveDataToDB(steps, distance, calories) {
     const transaction = db.transaction([STORE_NAME], 'readwrite');
     const store = transaction.objectStore(STORE_NAME);
     store.put({ date: today, steps, distance, calories });
+    // 保存完成后，刷新当前图表
+    transaction.oncomplete = () => {
+        // 获取当前活动按钮的视图类型
+        let activeView = 'daily';
+        if (document.getElementById('weeklyBtn').classList.contains('active')) activeView = 'weekly';
+        else if (document.getElementById('monthlyBtn').classList.contains('active')) activeView = 'monthly';
+        renderStats(activeView);
+    };
 }
 
 function loadTodayData() {
@@ -85,6 +95,154 @@ function loadTodayData() {
             updateUI(steps, distance, calories);
         }
     };
+}
+
+// 从 IndexedDB 读取所有历史数据（按日期升序）
+async function getAllHistoryData() {
+    if (!db) return [];
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction([STORE_NAME], 'readonly');
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.getAll();
+        request.onsuccess = () => {
+            const data = request.result;
+            // 按日期排序
+            data.sort((a, b) => new Date(a.date) - new Date(b.date));
+            resolve(data);
+        };
+        request.onerror = (e) => reject(e.target.error);
+    });
+}
+
+// 聚合周数据：将日期按周分组，计算每周总步数
+function aggregateWeekly(data) {
+    const weeks = {};
+    data.forEach(entry => {
+        const date = new Date(entry.date);
+        // 获取该日期所在周的周一日期（ISO 周）
+        const dayOfWeek = date.getDay(); // 0周日 ... 6周六
+        const diffToMonday = (dayOfWeek === 0 ? -6 : 1 - dayOfWeek);
+        const monday = new Date(date);
+        monday.setDate(date.getDate() + diffToMonday);
+        const weekKey = monday.toISOString().slice(0,10);
+        if (!weeks[weekKey]) {
+            weeks[weekKey] = { steps: 0, label: `${weekKey} 周` };
+        }
+        weeks[weekKey].steps += entry.steps;
+    });
+    // 转为数组并按日期排序
+    const weeksArray = Object.keys(weeks).sort().map(key => ({
+        label: key.substring(5) + "周", // 显示 MM-DD 周
+        steps: weeks[key].steps
+    }));
+    return weeksArray;
+}
+
+// 聚合月数据
+function aggregateMonthly(data) {
+    const months = {};
+    data.forEach(entry => {
+        const yearMonth = entry.date.substring(0,7); // yyyy-mm
+        if (!months[yearMonth]) {
+            months[yearMonth] = { steps: 0, label: yearMonth };
+        }
+        months[yearMonth].steps += entry.steps;
+    });
+    const monthsArray = Object.keys(months).sort().map(key => ({
+        label: key,
+        steps: months[key].steps
+    }));
+    return monthsArray;
+}
+
+// 渲染图表
+async function renderStats(viewType) {
+    const history = await getAllHistoryData();
+    if (history.length === 0) {
+        if (statsChart) statsChart.destroy();
+        return;
+    }
+    let labels = [];
+    let stepsData = [];
+    let title = '';
+
+    if (viewType === 'daily') {
+        // 取最近7天（如果不足7天则全部）
+        const last7 = history.slice(-7);
+        labels = last7.map(item => item.date.substring(5)); // MM-DD
+        stepsData = last7.map(item => item.steps);
+        title = '最近7天步数';
+    } else if (viewType === 'weekly') {
+        const weekly = aggregateWeekly(history);
+        labels = weekly.map(w => w.label);
+        stepsData = weekly.map(w => w.steps);
+        title = '每周总步数';
+    } else if (viewType === 'monthly') {
+        const monthly = aggregateMonthly(history);
+        labels = monthly.map(m => m.label);
+        stepsData = monthly.map(m => m.steps);
+        title = '每月总步数';
+    }
+
+    if (statsChart) statsChart.destroy();
+    const ctx = document.getElementById('statsChart').getContext('2d');
+    statsChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: '步数',
+                data: stepsData,
+                backgroundColor: 'rgba(0, 122, 255, 0.6)',
+                borderColor: '#007aff',
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+                title: { display: true, text: title },
+                legend: { display: false }
+            },
+            scales: {
+                y: { beginAtZero: true, title: { display: true, text: '步数' } },
+                x: { title: { display: true, text: viewType === 'daily' ? '日期' : (viewType === 'weekly' ? '周' : '月份') } }
+            }
+        }
+    });
+}
+
+// 初始化统计功能：绑定按钮事件，并在数据保存后刷新图表
+function initStats() {
+    const dailyBtn = document.getElementById('dailyBtn');
+    const weeklyBtn = document.getElementById('weeklyBtn');
+    const monthlyBtn = document.getElementById('monthlyBtn');
+    
+    dailyBtn.addEventListener('click', () => {
+        setActiveButton('dailyBtn');
+        renderStats('daily');
+    });
+    weeklyBtn.addEventListener('click', () => {
+        setActiveButton('weeklyBtn');
+        renderStats('weekly');
+    });
+    monthlyBtn.addEventListener('click', () => {
+        setActiveButton('monthlyBtn');
+        renderStats('monthly');
+    });
+    // 默认显示最近7天
+    if (dailyBtn) renderStats('daily');
+}
+
+function setActiveButton(activeId) {
+    ['dailyBtn', 'weeklyBtn', 'monthlyBtn'].forEach(id => {
+        const btn = document.getElementById(id);
+        if (btn) {
+            if (id === activeId) btn.classList.add('active');
+            else btn.classList.remove('active');
+        }
+    });
 }
 
 // ==================== 保活 ====================
@@ -225,6 +383,7 @@ window.addEventListener('beforeunload', () => {
 // ==================== 初始化 ====================
 (async () => {
     await openDB();
-    loadTodayData();
+    loadTodayData();      // 加载当日数据到顶部 UI
+    initStats();          // 初始化图表（会从 IndexedDB 读取所有历史数据渲染）
     document.getElementById('connectBtn').addEventListener('click', connectToDevice);
 })();

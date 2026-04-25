@@ -7,6 +7,8 @@
     <link rel="stylesheet" href="style.css">
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#007aff">
+    <!-- 引入 Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
     <div class="container">
@@ -19,6 +21,17 @@
         </div>
         <div id="errorArea"></div>
         <div id="statusArea" style="margin-top: 20px; font-size: 14px; color: #666;"></div>
+
+        <!-- 统计图表区域 -->
+        <div class="stats-card">
+            <h2>📊 历史统计</h2>
+            <div class="stats-buttons">
+                <button id="dailyBtn" class="stat-btn active">最近7天</button>
+                <button id="weeklyBtn" class="stat-btn">按周</button>
+                <button id="monthlyBtn" class="stat-btn">按月</button>
+            </div>
+            <canvas id="statsChart" width="400" height="300" style="max-width:100%; height:auto;"></canvas>
+        </div>
     </div>
     <script src="app.js"></script>
 </body>
