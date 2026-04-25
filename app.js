@@ -213,12 +213,58 @@ async function renderStats(viewType) {
     });
 }
 
+// 导出 CSV
+async function exportToCSV() {
+    console.log('准备导出数据...');
+    // 1. 从 IndexedDB 获取所有历史数据
+    const allData = await getAllHistoryData();
+    if (!allData.length) {
+        alert('没有历史数据可导出！');
+        return;
+    }
+
+    // 2. 将数据转换为 CSV 字符串
+    // 定义 CSV 的列头
+    const headers = ['日期', '步数', '距离(米)', '卡路里(kcal)'];
+    // 将数据映射为行数组
+    const rows = allData.map(item => [
+        item.date,
+        item.steps,
+        item.distance,
+        (item.calories / 1000).toFixed(2)
+    ]);
+    // 使用 '\\uFEFF' 解决中文乱码问题
+    let csvContent = "\uFEFF" + headers.join(',') + '\n';
+    rows.forEach(row => {
+        csvContent += row.join(',') + '\n';
+    });
+
+    // 3. 创建 Blob 并触发浏览器下载
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.href = url;
+    // 以当前日期为文件名
+    const today = new Date().toISOString().slice(0,10);
+    link.setAttribute('download', `watch_data_${today}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    
+    console.log('数据导出成功！');
+}
+
 // 初始化统计功能：绑定按钮事件，并在数据保存后刷新图表
 function initStats() {
     const dailyBtn = document.getElementById('dailyBtn');
     const weeklyBtn = document.getElementById('weeklyBtn');
     const monthlyBtn = document.getElementById('monthlyBtn');
-    
+    const exportBtn = document.getElementById('exportCsvBtn');
+    if (exportBtn) {
+        exportBtn.addEventListener('click', exportToCSV);
+    }    
+
     dailyBtn.addEventListener('click', () => {
         setActiveButton('dailyBtn');
         renderStats('daily');
