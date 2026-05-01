@@ -255,6 +255,93 @@ async function exportToCSV() {
     console.log('数据导出成功！');
 }
 
+// 导入 CSV 文件
+async function importFromCSV(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+            const csvText = event.target.result;
+            // 按行分割，过滤空行
+            const lines = csvText.split(/\r?\n/).filter(line => line.trim() !== '');
+            if (lines.length === 0) {
+                reject('CSV 文件为空');
+                return;
+            }
+            // 检查表头
+            const headers = lines[0].split(',');
+            const expectedHeaders = ['日期', '步数', '距离(米)', '卡路里'];
+            // 简单检查是否匹配预期表头（允许带BOM）
+            const cleanHeader = headers[0].replace(/^\uFEFF/, '');
+            if (cleanHeader !== expectedHeaders[0]) {
+                reject('CSV 格式不正确，请使用导出的标准格式');
+                return;
+            }
+            const records = [];
+            for (let i = 1; i < lines.length; i++) {
+                const values = lines[i].split(',');
+                if (values.length < 4) continue;
+                const date = values[0].trim();
+                const steps = parseInt(values[1], 10);
+                const distance = parseInt(values[2], 10);
+                const calories = parseFloat(values[3]) * 100; // 因为导出的卡路里除以了100，存储时乘以100
+                if (isNaN(steps) || isNaN(distance) || isNaN(calories)) continue;
+                records.push({ date, steps, distance, calories });
+            }
+            if (records.length === 0) {
+                reject('没有有效数据');
+                return;
+            }
+            // 写入数据库（覆盖已有日期）
+            const transaction = db.transaction([STORE_NAME], 'readwrite');
+            const store = transaction.objectStore(STORE_NAME);
+            for (const record of records) {
+                await new Promise((res, rej) => {
+                    const request = store.put(record);
+                    request.onsuccess = () => res();
+                    request.onerror = () => rej(request.error);
+                });
+            }
+            transaction.oncomplete = () => {
+                console.log(`导入成功，共 ${records.length} 条记录`);
+                resolve(records.length);
+            };
+            transaction.onerror = (e) => reject(e.target.error);
+        };
+        reader.onerror = () => reject(reader.error);
+        reader.readAsText(file, 'UTF-8');
+    });
+}
+
+// 绑定导入按钮事件
+function initImport() {
+    const importBtn = document.getElementById('importCsvBtn');
+    const fileInput = document.getElementById('csvFileInput');
+    if (!importBtn || !fileInput) return;
+    importBtn.addEventListener('click', () => {
+        fileInput.click();
+    });
+    fileInput.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        try {
+            await importFromCSV(file);
+            alert('导入成功！');
+            // 刷新当前图表
+            let activeView = 'daily';
+            if (document.getElementById('weeklyBtn').classList.contains('active')) activeView = 'weekly';
+            else if (document.getElementById('monthlyBtn').classList.contains('active')) activeView = 'monthly';
+            await renderStats(activeView);
+            // 同时刷新当天显示（如果当天数据有更新）
+            await loadTodayData();
+        } catch (err) {
+            console.error(err);
+            alert('导入失败：' + err);
+        } finally {
+            fileInput.value = ''; // 清空，允许重新选择同一文件
+        }
+    });
+}
+
 // 初始化统计功能：绑定按钮事件，并在数据保存后刷新图表
 function initStats() {
     const dailyBtn = document.getElementById('dailyBtn');
@@ -431,5 +518,6 @@ window.addEventListener('beforeunload', () => {
     await openDB();
     loadTodayData();      // 加载当日数据到顶部 UI
     initStats();          // 初始化图表（会从 IndexedDB 读取所有历史数据渲染）
+    initImport();
     document.getElementById('connectBtn').addEventListener('click', connectToDevice);
 })();
