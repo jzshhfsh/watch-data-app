@@ -283,7 +283,7 @@ async function importFromCSV(file) {
                 const date = values[0].trim();
                 const steps = parseInt(values[1], 10);
                 const distance = parseInt(values[2], 10);
-                const calories = parseFloat(values[3]) * 100; // 因为导出的卡路里除以了100，存储时乘以100
+                const calories = parseFloat(values[3]) * 1000; // 因为导出的卡路里除以了100，存储时乘以100
                 if (isNaN(steps) || isNaN(distance) || isNaN(calories)) continue;
                 records.push({ date, steps, distance, calories });
             }
